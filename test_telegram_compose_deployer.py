@@ -10,6 +10,7 @@ from telegram_compose_deployer import (
     process_update,
     send_deployment_status,
     stash_local_changes,
+    latest_remote_commit,
 )
 
 
@@ -57,6 +58,11 @@ class ParseDeploymentMessageTests(unittest.TestCase):
         telegram_request.reset_mock()
         send_deployment_status({**base_config, "topic_id": ""}, "done")
         self.assertNotIn("message_thread_id", telegram_request.call_args.args[2])
+
+    @patch("telegram_compose_deployer.output", return_value="")
+    def test_reports_missing_remote_branch(self, output_command):
+        with self.assertRaisesRegex(RuntimeError, "Remote branch not found: main"):
+            latest_remote_commit(Path("/target"), "main")
 
     @patch.dict(
         os.environ,

@@ -167,6 +167,17 @@ def send_deployment_status(config: dict[str, str], text: str) -> None:
         LOGGER.error("Could not send deployment status to Telegram: %s", exc)
 
 
+def latest_remote_commit(target: Path, branch: str) -> str:
+    """Return the latest commit for a remote branch or explain when it is absent."""
+    result = output(["git", "ls-remote", "origin", f"refs/heads/{branch}"], target)
+    if not result:
+        raise RuntimeError(f"Remote branch not found: {branch}. Use /deploy <branch> or change TELEGRAM_DEPLOY_DEFAULT_BRANCH.")
+    commit = result.split()[0]
+    if not re.fullmatch(r"[0-9a-f]{40}", commit):
+        raise RuntimeError(f"Invalid commit returned for remote branch {branch}: {commit!r}")
+    return commit
+
+
 def deploy(message: DeploymentMessage, config: dict[str, str], dry_run: bool = False) -> None:
     """Update the target checkout to the exact commit and recreate Compose services."""
     target = Path(config["target_folder"]).expanduser().resolve()
@@ -267,7 +278,7 @@ def process_update(update: dict, config: dict[str, str], dry_run: bool) -> None:
         target = Path(config["target_folder"]).expanduser().resolve()
         try:
             with deployment_lock(target, config):
-                latest_commit = output(["git", "ls-remote", "origin", f"refs/heads/{deploy_branch}"], target).split()[0]
+                latest_commit = latest_remote_commit(target, deploy_branch)
                 deployment = DeploymentMessage(
                     branch=deploy_branch,
                     commit=latest_commit,
