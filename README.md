@@ -16,7 +16,7 @@ Details: https://github.com/owner/repository/commit/full-40-character-sha
 ## Behavior
 
 - Uses Telegram long polling; no public webhook endpoint is required.
-- Filters updates by `TELEGRAM_CHAT_ID` and required `TELEGRAM_TOPIC_ID`.
+- Filters updates by `TELEGRAM_CHAT_ID` and, when configured, `TELEGRAM_TOPIC_ID`.
 - Requires `TELEGRAM_MESSAGE_REGEX` or the built-in notification pattern.
 - Validates the branch, full SHA, repository, Git origin, and remote ancestry.
 - Stashes tracked local changes before switching commits and restores them with
@@ -32,7 +32,10 @@ Details: https://github.com/owner/repository/commit/full-40-character-sha
   characters of the deployed commit SHA.
 - Accepts `/deploy` or `/deploy <branch>` in the configured chat. The branch
   defaults to `TELEGRAM_DEPLOY_DEFAULT_BRANCH` (`main` by default), and the bot
-  replies with the final deployment status in the same topic.
+  replies with the final deployment status in the same topic when configured,
+  or directly in the group otherwise.
+- Reports `Deployment already up to date` when the branch's latest commit is
+  already checked out and deployed.
 - Uses a non-blocking file lock so concurrent workers or commands cannot deploy
   the same target checkout at the same time.
 

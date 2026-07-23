@@ -8,6 +8,7 @@ from telegram_compose_deployer import (
     parse_deploy_command,
     parse_deployment_message,
     process_update,
+    send_deployment_status,
     stash_local_changes,
 )
 
@@ -47,12 +48,21 @@ class ParseDeploymentMessageTests(unittest.TestCase):
 
         parse_message.assert_not_called()
 
+    @patch("telegram_compose_deployer.telegram_request")
+    def test_status_uses_topic_only_when_configured(self, telegram_request):
+        base_config = {"telegram_bot_token": "token", "chat_id": "-100123"}
+        send_deployment_status({**base_config, "topic_id": "456"}, "done")
+        self.assertEqual(telegram_request.call_args.args[2]["message_thread_id"], 456)
+
+        telegram_request.reset_mock()
+        send_deployment_status({**base_config, "topic_id": ""}, "done")
+        self.assertNotIn("message_thread_id", telegram_request.call_args.args[2])
+
     @patch.dict(
         os.environ,
         {
             "TELEGRAM_BOT_TOKEN": "test-token",
             "TELEGRAM_CHAT_ID": "-100123",
-            "TELEGRAM_TOPIC_ID": "456",
             "TARGET_FOLDER": "/srv/example",
             "TELEGRAM_REPOSITORY": "example-org/sample-dashboard",
         },
@@ -61,7 +71,7 @@ class ParseDeploymentMessageTests(unittest.TestCase):
     def test_normalizes_environment_keys_for_runtime(self):
         config = load_config()
         self.assertEqual(config["chat_id"], "-100123")
-        self.assertEqual(config["topic_id"], "456")
+        self.assertEqual(config["topic_id"], "")
         self.assertEqual(config["telegram_bot_token"], "test-token")
         self.assertEqual(config["target_folder"], "/srv/example")
         self.assertEqual(config["repository"], "example-org/sample-dashboard")
