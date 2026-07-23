@@ -17,6 +17,7 @@ import shlex
 import subprocess
 import sys
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.error import HTTPError, URLError
@@ -25,6 +26,7 @@ from urllib.request import Request, urlopen
 
 
 LOGGER = logging.getLogger("telegram-compose-deployer")
+DEPLOY_COMMAND_PATTERN = re.compile(r"(?i)^/deploy(?:@[a-z0-9_]+)?(?:\s+(?P<branch>\S+))?\s*$")
 DEFAULT_MESSAGE_REGEX = r"(?ims)^New commit on .+?^Bot:\s*@?\S+.+?^Branch:\s*\S+.+?^Commit:\s*[0-9a-f]{7,40}\s*\([0-9a-f]{40}\).+?^Details:\s*https?://\S+"
 FIELD_PATTERNS = {
     "branch": re.compile(r"(?im)^Branch:\s*(?P<value>[^\r\n]+)\s*$"),
@@ -39,6 +41,10 @@ class TelegramRateLimitError(RuntimeError):
     def __init__(self, retry_after: int, description: str) -> None:
         super().__init__(description)
         self.retry_after = max(1, retry_after)
+
+
+class DeploymentInProgress(RuntimeError):
+    """Another worker currently owns the deployment lock."""
 
 
 @dataclass(frozen=True)
@@ -109,6 +115,49 @@ def restore_local_changes(target: Path) -> None:
     """Restore the stash created by stash_local_changes, raising on conflicts."""
     run(["git", "stash", "pop"], target)
     LOGGER.info("Restored local tracked changes after deployment")
+
+
+def parse_deploy_command(text: str, default_branch: str) -> str | None:
+    """Return the requested branch when text is a /deploy command."""
+    match = DEPLOY_COMMAND_PATTERN.fullmatch(text.strip())
+    return match.group("branch") if match and match.group("branch") else default_branch if match else None
+
+
+@contextmanager
+def deployment_lock(target: Path, config: dict[str, str]):
+    """Acquire a non-blocking process/file lock for the target checkout."""
+    lock_path = Path(config.get("lock_file", "")).expanduser() if config.get("lock_file") else target / ".telegram-compose-deployer.lock"
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    lock_handle = lock_path.open("a+", encoding="utf-8")
+    fcntl_module = None
+    try:
+        try:
+            import fcntl as fcntl_module
+
+            fcntl_module.flock(lock_handle.fileno(), fcntl_module.LOCK_EX | fcntl_module.LOCK_NB)
+        except ImportError:
+            LOGGER.warning("File locking is unavailable on this platform; relying on the single worker process")
+        except BlockingIOError as exc:
+            raise DeploymentInProgress(f"Deployment lock is held: {lock_path}") from exc
+        try:
+            yield
+        finally:
+            if fcntl_module is not None:
+                fcntl_module.flock(lock_handle.fileno(), fcntl_module.LOCK_UN)
+    finally:
+        lock_handle.close()
+
+
+def send_deployment_status(config: dict[str, str], text: str) -> None:
+    """Send a best-effort final status message to the configured Telegram chat."""
+    try:
+        telegram_request(
+            config["telegram_bot_token"],
+            "sendMessage",
+            {"chat_id": config["chat_id"], "text": text, "disable_web_page_preview": True},
+        )
+    except (HTTPError, URLError, TimeoutError, RuntimeError) as exc:
+        LOGGER.error("Could not send deployment status to Telegram: %s", exc)
 
 
 def deploy(message: DeploymentMessage, config: dict[str, str], dry_run: bool = False) -> None:
@@ -206,12 +255,38 @@ def process_update(update: dict, config: dict[str, str], dry_run: bool) -> None:
     if topic_id and str(message.get("message_thread_id")) != topic_id:
         return
     text = message.get("text") or message.get("caption") or ""
+    deploy_branch = parse_deploy_command(text, config["default_branch"])
+    if deploy_branch is not None:
+        target = Path(config["target_folder"]).expanduser().resolve()
+        try:
+            with deployment_lock(target, config):
+                latest_commit = output(["git", "ls-remote", "origin", f"refs/heads/{deploy_branch}"], target).split()[0]
+                deployment = DeploymentMessage(
+                    branch=deploy_branch,
+                    commit=latest_commit,
+                    repository=config["repository"],
+                    details_url="",
+                )
+                deploy(deployment, config, dry_run=dry_run)
+            send_deployment_status(
+                config,
+                f"Deployment completed: {config['repository']} {deploy_branch}@{latest_commit[:12]}",
+            )
+        except DeploymentInProgress:
+            LOGGER.warning("Deployment command ignored because another deployment is in progress")
+            send_deployment_status(config, "Deployment skipped: another deployment is already in progress.")
+        except (RuntimeError, subprocess.CalledProcessError, OSError, ValueError, IndexError) as exc:
+            LOGGER.error("Deployment command failed for branch %s: %s", deploy_branch, exc)
+            send_deployment_status(config, f"Deployment failed for {deploy_branch}: {exc}")
+        return
     parsed = parse_deployment_message(text, config["message_regex"])
     if parsed is None:
         LOGGER.info("Ignored update %s: message did not match the configured regex", update.get("update_id"))
         return
     LOGGER.info("Accepted update %s for %s@%s", update.get("update_id"), parsed.repository, parsed.commit)
-    deploy(parsed, config, dry_run=dry_run)
+    target = Path(config["target_folder"]).expanduser().resolve()
+    with deployment_lock(target, config):
+        deploy(parsed, config, dry_run=dry_run)
 
 
 def load_config() -> dict[str, str]:
@@ -238,6 +313,8 @@ def load_config() -> dict[str, str]:
         "message_regex": os.getenv("TELEGRAM_MESSAGE_REGEX", DEFAULT_MESSAGE_REGEX),
         "branches": os.getenv("TELEGRAM_ALLOWED_BRANCHES", ""),
         "topic_id": os.getenv("TELEGRAM_TOPIC_ID", ""),
+        "default_branch": os.getenv("TELEGRAM_DEPLOY_DEFAULT_BRANCH", "main"),
+        "lock_file": os.getenv("TELEGRAM_DEPLOY_LOCK_FILE", ""),
         "compose_profiles": os.getenv("COMPOSE_PROFILES", "production"),
         "compose_file": os.getenv("COMPOSE_FILE", ""),
         "compose_services": os.getenv("COMPOSE_SERVICES", ""),

@@ -30,6 +30,11 @@ Details: https://github.com/owner/repository/commit/full-40-character-sha
   local deployments.
 - Logs each successful deployment with the repository, branch, and first 12
   characters of the deployed commit SHA.
+- Accepts `/deploy` or `/deploy <branch>` in the configured chat. The branch
+  defaults to `TELEGRAM_DEPLOY_DEFAULT_BRANCH` (`main` by default), and the bot
+  replies with the final deployment status.
+- Uses a non-blocking file lock so concurrent workers or commands cannot deploy
+  the same target checkout at the same time.
 
 The target checkout must be clean of unresolved conflicts and have an
 `origin` remote. Do not run multiple workers against the same checkout. If
@@ -49,6 +54,18 @@ For a configuration check without changing Git or Docker:
 ```bash
 python3 telegram_compose_deployer.py --once --dry-run
 ```
+
+In the configured Telegram chat, use:
+
+```text
+/deploy
+/deploy development
+```
+
+The command resolves the latest commit at the requested remote branch and
+passes it through the same Git validation, local-change preservation, and
+Compose workflow as an automated commit notification. The bot sends a final
+success, failure, or already-in-progress status message.
 
 ## systemd installation
 

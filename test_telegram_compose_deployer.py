@@ -3,7 +3,7 @@ import os
 from pathlib import Path
 from unittest.mock import patch
 
-from telegram_compose_deployer import load_config, parse_deployment_message, stash_local_changes
+from telegram_compose_deployer import load_config, parse_deploy_command, parse_deployment_message, stash_local_changes
 
 
 MESSAGE = """New commit on main
@@ -18,6 +18,12 @@ Details: https://github.com/example-org/sample-dashboard/commit/0123456789abcdef
 
 
 class ParseDeploymentMessageTests(unittest.TestCase):
+    def test_deploy_command_defaults_to_main(self):
+        self.assertEqual(parse_deploy_command("/deploy", "main"), "main")
+        self.assertEqual(parse_deploy_command("/deploy@example_deploy_bot", "main"), "main")
+        self.assertEqual(parse_deploy_command("/deploy release/2026", "main"), "release/2026")
+        self.assertIsNone(parse_deploy_command("deploy main", "main"))
+
     @patch.dict(
         os.environ,
         {
