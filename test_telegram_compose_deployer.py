@@ -1,8 +1,9 @@
 import unittest
+import os
 from pathlib import Path
 from unittest.mock import patch
 
-from telegram_compose_deployer import parse_deployment_message, stash_local_changes
+from telegram_compose_deployer import load_config, parse_deployment_message, stash_local_changes
 
 
 MESSAGE = """New commit on main
@@ -17,6 +18,23 @@ Details: https://github.com/example-org/sample-dashboard/commit/0123456789abcdef
 
 
 class ParseDeploymentMessageTests(unittest.TestCase):
+    @patch.dict(
+        os.environ,
+        {
+            "TELEGRAM_BOT_TOKEN": "test-token",
+            "TELEGRAM_CHAT_ID": "-100123",
+            "TARGET_FOLDER": "/srv/example",
+            "TELEGRAM_REPOSITORY": "example-org/sample-dashboard",
+        },
+        clear=False,
+    )
+    def test_normalizes_environment_keys_for_runtime(self):
+        config = load_config()
+        self.assertEqual(config["chat_id"], "-100123")
+        self.assertEqual(config["telegram_bot_token"], "test-token")
+        self.assertEqual(config["target_folder"], "/srv/example")
+        self.assertEqual(config["repository"], "example-org/sample-dashboard")
+
     def test_parses_example(self):
         parsed = parse_deployment_message(MESSAGE, r"(?s)^New commit on")
         self.assertEqual(parsed.branch, "main")

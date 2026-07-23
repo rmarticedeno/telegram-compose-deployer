@@ -209,10 +209,24 @@ def process_update(update: dict, config: dict[str, str], dry_run: bool) -> None:
 
 
 def load_config() -> dict[str, str]:
-    required = {name: os.getenv(name, "").strip() for name in ("TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID", "TARGET_FOLDER", "TELEGRAM_REPOSITORY")}
+    required = {
+        "telegram_bot_token": os.getenv("TELEGRAM_BOT_TOKEN", "").strip(),
+        "chat_id": os.getenv("TELEGRAM_CHAT_ID", "").strip(),
+        "target_folder": os.getenv("TARGET_FOLDER", "").strip(),
+        "repository": os.getenv("TELEGRAM_REPOSITORY", "").strip(),
+    }
     missing = [name for name, value in required.items() if not value]
     if missing:
-        raise ValueError(f"Missing required environment variables: {', '.join(missing)}")
+        environment_names = {
+            "telegram_bot_token": "TELEGRAM_BOT_TOKEN",
+            "chat_id": "TELEGRAM_CHAT_ID",
+            "target_folder": "TARGET_FOLDER",
+            "repository": "TELEGRAM_REPOSITORY",
+        }
+        raise ValueError(
+            "Missing required environment variables: "
+            + ", ".join(environment_names[name] for name in missing)
+        )
     return {
         **required,
         "message_regex": os.getenv("TELEGRAM_MESSAGE_REGEX", DEFAULT_MESSAGE_REGEX),
@@ -245,7 +259,7 @@ def main() -> int:
                 params["offset"] = offset
             try:
                 last_poll_at = time.monotonic()
-                updates = telegram_request(config["TELEGRAM_BOT_TOKEN"], "getUpdates", params).get("result", [])
+                updates = telegram_request(config["telegram_bot_token"], "getUpdates", params).get("result", [])
             except TelegramRateLimitError as exc:
                 LOGGER.error("Telegram rate limit reached; retrying in %ss: %s", exc.retry_after, exc)
                 if args.once:
