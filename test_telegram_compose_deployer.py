@@ -69,6 +69,7 @@ class ParseDeploymentMessageTests(unittest.TestCase):
         {
             "TELEGRAM_BOT_TOKEN": "test-token",
             "TELEGRAM_CHAT_ID": "-100123",
+            "TELEGRAM_DEPLOY_DEFAULT_BRANCH": "development",
             "TARGET_FOLDER": "/srv/example",
             "TELEGRAM_REPOSITORY": "example-org/sample-dashboard",
         },
@@ -77,6 +78,8 @@ class ParseDeploymentMessageTests(unittest.TestCase):
     def test_normalizes_environment_keys_for_runtime(self):
         config = load_config()
         self.assertEqual(config["chat_id"], "-100123")
+        self.assertEqual(config["default_branch"], "development")
+        self.assertEqual(parse_deploy_command("/deploy", config["default_branch"]), "development")
         self.assertEqual(config["topic_id"], "")
         self.assertEqual(config["telegram_bot_token"], "test-token")
         self.assertEqual(config["target_folder"], "/srv/example")
