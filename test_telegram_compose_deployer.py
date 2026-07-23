@@ -3,7 +3,13 @@ import os
 from pathlib import Path
 from unittest.mock import patch
 
-from telegram_compose_deployer import load_config, parse_deploy_command, parse_deployment_message, stash_local_changes
+from telegram_compose_deployer import (
+    load_config,
+    parse_deploy_command,
+    parse_deployment_message,
+    process_update,
+    stash_local_changes,
+)
 
 
 MESSAGE = """New commit on main
@@ -23,6 +29,23 @@ class ParseDeploymentMessageTests(unittest.TestCase):
         self.assertEqual(parse_deploy_command("/deploy@example_deploy_bot", "main"), "main")
         self.assertEqual(parse_deploy_command("/deploy release/2026", "main"), "release/2026")
         self.assertIsNone(parse_deploy_command("deploy main", "main"))
+
+    @patch("telegram_compose_deployer.parse_deployment_message")
+    def test_discards_messages_from_other_chat_or_topic(self, parse_message):
+        config = {"chat_id": "-100123", "topic_id": "456", "message_regex": "match"}
+
+        process_update(
+            {"update_id": 1, "message": {"chat": {"id": -100999}, "message_thread_id": 456, "text": "match"}},
+            config,
+            dry_run=True,
+        )
+        process_update(
+            {"update_id": 2, "message": {"chat": {"id": -100123}, "message_thread_id": 789, "text": "match"}},
+            config,
+            dry_run=True,
+        )
+
+        parse_message.assert_not_called()
 
     @patch.dict(
         os.environ,
