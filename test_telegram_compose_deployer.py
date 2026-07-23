@@ -1,0 +1,50 @@
+import unittest
+from pathlib import Path
+from unittest.mock import patch
+
+from telegram_compose_deployer import parse_deployment_message, stash_local_changes
+
+
+MESSAGE = """New commit on main
+
+Bot: @example_deploy_bot
+Branch: main
+Subject: ci: include branch in deployment message
+Commit: 0123456 (0123456789abcdef0123456789abcdef01234567)
+Author: Example User <deploy@example.invalid>
+Date: 2026-01-01T00:00:00Z
+Details: https://github.com/example-org/sample-dashboard/commit/0123456789abcdef0123456789abcdef01234567"""
+
+
+class ParseDeploymentMessageTests(unittest.TestCase):
+    def test_parses_example(self):
+        parsed = parse_deployment_message(MESSAGE, r"(?s)^New commit on")
+        self.assertEqual(parsed.branch, "main")
+        self.assertEqual(parsed.commit, "0123456789abcdef0123456789abcdef01234567")
+        self.assertEqual(parsed.repository, "example-org/sample-dashboard")
+
+    def test_rejects_message_without_regex_match(self):
+        self.assertIsNone(parse_deployment_message(MESSAGE, r"^Release completed"))
+
+    def test_rejects_mismatched_short_commit(self):
+        invalid = MESSAGE.replace("0123456 (", "deadbee (")
+        with self.assertRaises(ValueError):
+            parse_deployment_message(invalid, r"(?s)^New commit on")
+
+    @patch("telegram_compose_deployer.run")
+    @patch("telegram_compose_deployer.subprocess.run")
+    def test_stashes_tracked_changes_but_not_untracked_only(self, subprocess_run, run_command):
+        subprocess_run.side_effect = [unittest.mock.Mock(returncode=1), unittest.mock.Mock(returncode=0)]
+        self.assertTrue(stash_local_changes(Path("/target")))
+        run_command.assert_called_once_with(
+            ["git", "stash", "push", "--message", "telegram-compose-deployer"], Path("/target")
+        )
+
+        subprocess_run.side_effect = [unittest.mock.Mock(returncode=0), unittest.mock.Mock(returncode=0)]
+        run_command.reset_mock()
+        self.assertFalse(stash_local_changes(Path("/target")))
+        run_command.assert_not_called()
+
+
+if __name__ == "__main__":
+    unittest.main()
