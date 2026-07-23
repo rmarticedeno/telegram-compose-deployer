@@ -7,6 +7,7 @@ from telegram_compose_deployer import (
     load_config,
     parse_deploy_command,
     parse_deployment_message,
+    parse_simple_command,
     process_update,
     send_deployment_status,
     stash_local_changes,
@@ -31,6 +32,9 @@ class ParseDeploymentMessageTests(unittest.TestCase):
         self.assertEqual(parse_deploy_command("/deploy@example_deploy_bot", "main"), "main")
         self.assertEqual(parse_deploy_command("/deploy release/2026", "main"), "release/2026")
         self.assertIsNone(parse_deploy_command("deploy main", "main"))
+        self.assertEqual(parse_simple_command("/status"), "status")
+        self.assertEqual(parse_simple_command("/reset@example_deploy_bot"), "reset")
+        self.assertIsNone(parse_simple_command("/status now"))
 
     @patch("telegram_compose_deployer.parse_deployment_message")
     def test_discards_messages_from_other_chat_or_topic(self, parse_message):

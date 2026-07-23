@@ -63,12 +63,18 @@ In the configured Telegram chat, use:
 ```text
 /deploy
 /deploy development
+/status
+/reset
 ```
 
 The command resolves the latest commit at the requested remote branch and
 passes it through the same Git validation, local-change preservation, and
 Compose workflow as an automated commit notification. The bot sends a final
 success, failure, or already-in-progress status message.
+
+`/status` reports the checked-out branch, commit, working-tree state, and
+whether a deployment is currently running. `/reset` removes a stale lock file;
+it refuses to remove a lock held by an active deployment.
 
 ## systemd installation
 

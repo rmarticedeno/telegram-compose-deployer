@@ -27,6 +27,10 @@ from urllib.request import Request, urlopen
 
 LOGGER = logging.getLogger("telegram-compose-deployer")
 DEPLOY_COMMAND_PATTERN = re.compile(r"(?i)^/deploy(?:@[a-z0-9_]+)?(?:\s+(?P<branch>\S+))?\s*$")
+SIMPLE_COMMAND_PATTERNS = {
+    "status": re.compile(r"(?i)^/status(?:@[a-z0-9_]+)?\s*$"),
+    "reset": re.compile(r"(?i)^/reset(?:@[a-z0-9_]+)?\s*$"),
+}
 DEFAULT_MESSAGE_REGEX = r"(?ims)^New commit on .+?^Bot:\s*@?\S+.+?^Branch:\s*\S+.+?^Commit:\s*[0-9a-f]{7,40}\s*\([0-9a-f]{40}\).+?^Details:\s*https?://\S+"
 FIELD_PATTERNS = {
     "branch": re.compile(r"(?im)^Branch:\s*(?P<value>[^\r\n]+)\s*$"),
@@ -123,10 +127,26 @@ def parse_deploy_command(text: str, default_branch: str) -> str | None:
     return match.group("branch") if match and match.group("branch") else default_branch if match else None
 
 
+def parse_simple_command(text: str) -> str | None:
+    """Return a supported no-argument command name, if present."""
+    for command, pattern in SIMPLE_COMMAND_PATTERNS.items():
+        if pattern.fullmatch(text.strip()):
+            return command
+    return None
+
+
+def deployment_lock_path(target: Path, config: dict[str, str]) -> Path:
+    return (
+        Path(config["lock_file"]).expanduser()
+        if config.get("lock_file")
+        else target / ".telegram-compose-deployer.lock"
+    )
+
+
 @contextmanager
 def deployment_lock(target: Path, config: dict[str, str]):
     """Acquire a non-blocking process/file lock for the target checkout."""
-    lock_path = Path(config.get("lock_file", "")).expanduser() if config.get("lock_file") else target / ".telegram-compose-deployer.lock"
+    lock_path = deployment_lock_path(target, config)
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     lock_handle = lock_path.open("a+", encoding="utf-8")
     fcntl_module = None
@@ -176,6 +196,45 @@ def latest_remote_commit(target: Path, branch: str) -> str:
     if not re.fullmatch(r"[0-9a-f]{40}", commit):
         raise RuntimeError(f"Invalid commit returned for remote branch {branch}: {commit!r}")
     return commit
+
+
+def current_deployment_state(target: Path) -> tuple[str, str, str]:
+    """Return current branch, commit, and a short working-tree state."""
+    branch = output(["git", "branch", "--show-current"], target) or "(detached HEAD)"
+    commit = output(["git", "rev-parse", "--short=12", "HEAD"], target)
+    worktree = "clean" if not output(["git", "status", "--porcelain"], target) else "modified"
+    return branch, commit, worktree
+
+
+def handle_status_command(config: dict[str, str]) -> None:
+    target = Path(config["target_folder"]).expanduser().resolve()
+    try:
+        with deployment_lock(target, config):
+            branch, commit, worktree = current_deployment_state(target)
+            send_deployment_status(
+                config,
+                f"Current deployment: {config['repository']} {branch}@{commit} (working tree: {worktree})",
+            )
+    except DeploymentInProgress:
+        send_deployment_status(config, "Deployment status: a deployment is currently in progress.")
+    except (RuntimeError, subprocess.CalledProcessError, OSError, ValueError) as exc:
+        LOGGER.error("Could not read deployment status: %s", exc)
+        send_deployment_status(config, f"Could not read deployment status: {exc}")
+
+
+def handle_reset_command(config: dict[str, str]) -> None:
+    target = Path(config["target_folder"]).expanduser().resolve()
+    lock_path = deployment_lock_path(target, config)
+    try:
+        with deployment_lock(target, config):
+            if lock_path.exists():
+                lock_path.unlink()
+            send_deployment_status(config, "Deployment lock reset successfully.")
+    except DeploymentInProgress:
+        send_deployment_status(config, "Deployment lock was not reset: a deployment is currently in progress.")
+    except (RuntimeError, OSError) as exc:
+        LOGGER.error("Could not reset deployment lock: %s", exc)
+        send_deployment_status(config, f"Could not reset deployment lock: {exc}")
 
 
 def deploy(message: DeploymentMessage, config: dict[str, str], dry_run: bool = False) -> None:
@@ -299,6 +358,10 @@ def process_update(update: dict, config: dict[str, str], dry_run: bool) -> None:
                         f"Deployment already up to date: {deployment.repository} {deploy_branch}@{latest_commit[:12]}",
                     )
                     return
+                send_deployment_status(
+                    config,
+                    f"Deployment started: {deployment.repository} {deploy_branch}@{latest_commit[:12]}",
+                )
                 deploy(deployment, config, dry_run=dry_run)
             send_deployment_status(
                 config,
@@ -311,6 +374,13 @@ def process_update(update: dict, config: dict[str, str], dry_run: bool) -> None:
             LOGGER.error("Deployment command failed for branch %s: %s", deploy_branch, exc)
             send_deployment_status(config, f"Deployment failed for {deploy_branch}: {exc}")
         return
+    simple_command = parse_simple_command(text)
+    if simple_command == "status":
+        handle_status_command(config)
+        return
+    if simple_command == "reset":
+        handle_reset_command(config)
+        return
     parsed = parse_deployment_message(text, config["message_regex"])
     if parsed is None:
         LOGGER.info("Ignored update %s: message did not match the configured regex", update.get("update_id"))
@@ -318,6 +388,10 @@ def process_update(update: dict, config: dict[str, str], dry_run: bool) -> None:
     LOGGER.info("Accepted update %s for %s@%s", update.get("update_id"), parsed.repository, parsed.commit)
     target = Path(config["target_folder"]).expanduser().resolve()
     with deployment_lock(target, config):
+        send_deployment_status(
+            config,
+            f"Deployment started: {parsed.repository} {parsed.branch}@{parsed.commit[:12]}",
+        )
         deploy(parsed, config, dry_run=dry_run)
 
 
