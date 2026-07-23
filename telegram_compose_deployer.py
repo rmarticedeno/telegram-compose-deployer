@@ -154,7 +154,12 @@ def send_deployment_status(config: dict[str, str], text: str) -> None:
         telegram_request(
             config["telegram_bot_token"],
             "sendMessage",
-            {"chat_id": config["chat_id"], "text": text, "disable_web_page_preview": True},
+            {
+                "chat_id": config["chat_id"],
+                "message_thread_id": int(config["topic_id"]),
+                "text": text,
+                "disable_web_page_preview": True,
+            },
         )
     except (HTTPError, URLError, TimeoutError, RuntimeError) as exc:
         LOGGER.error("Could not send deployment status to Telegram: %s", exc)
@@ -251,8 +256,8 @@ def process_update(update: dict, config: dict[str, str], dry_run: bool) -> None:
     message = update.get("message") or update.get("channel_post")
     if not message or str(message.get("chat", {}).get("id")) != config["chat_id"]:
         return
-    topic_id = config.get("topic_id", "").strip()
-    if topic_id and str(message.get("message_thread_id")) != topic_id:
+    topic_id = config["topic_id"]
+    if str(message.get("message_thread_id")) != topic_id:
         return
     text = message.get("text") or message.get("caption") or ""
     deploy_branch = parse_deploy_command(text, config["default_branch"])
@@ -293,6 +298,7 @@ def load_config() -> dict[str, str]:
     required = {
         "telegram_bot_token": os.getenv("TELEGRAM_BOT_TOKEN", "").strip(),
         "chat_id": os.getenv("TELEGRAM_CHAT_ID", "").strip(),
+        "topic_id": os.getenv("TELEGRAM_TOPIC_ID", "").strip(),
         "target_folder": os.getenv("TARGET_FOLDER", "").strip(),
         "repository": os.getenv("TELEGRAM_REPOSITORY", "").strip(),
     }
@@ -301,6 +307,7 @@ def load_config() -> dict[str, str]:
         environment_names = {
             "telegram_bot_token": "TELEGRAM_BOT_TOKEN",
             "chat_id": "TELEGRAM_CHAT_ID",
+            "topic_id": "TELEGRAM_TOPIC_ID",
             "target_folder": "TARGET_FOLDER",
             "repository": "TELEGRAM_REPOSITORY",
         }
@@ -312,7 +319,6 @@ def load_config() -> dict[str, str]:
         **required,
         "message_regex": os.getenv("TELEGRAM_MESSAGE_REGEX", DEFAULT_MESSAGE_REGEX),
         "branches": os.getenv("TELEGRAM_ALLOWED_BRANCHES", ""),
-        "topic_id": os.getenv("TELEGRAM_TOPIC_ID", ""),
         "default_branch": os.getenv("TELEGRAM_DEPLOY_DEFAULT_BRANCH", "main"),
         "lock_file": os.getenv("TELEGRAM_DEPLOY_LOCK_FILE", ""),
         "compose_profiles": os.getenv("COMPOSE_PROFILES", "production"),
