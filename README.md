@@ -28,6 +28,8 @@ Details: https://github.com/owner/repository/commit/full-40-character-sha
 - Uses long polling with a minimum timeout, honors Telegram `retry_after` on
   HTTP/API 429 responses, spaces rapid backlog polls, and backs off failed
   local deployments.
+- Logs each successful deployment with the repository, branch, and first 12
+  characters of the deployed commit SHA.
 
 The target checkout must be clean of unresolved conflicts and have an
 `origin` remote. Do not run multiple workers against the same checkout. If

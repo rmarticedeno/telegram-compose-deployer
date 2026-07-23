@@ -159,6 +159,12 @@ def deploy(message: DeploymentMessage, config: dict[str, str], dry_run: bool = F
             run(["git", "switch", "--track", "-c", message.branch, f"origin/{message.branch}"], target)
         run(["git", "reset", "--hard", message.commit], target)
         run(compose, target)
+        LOGGER.info(
+            "New version deployed: repository=%s branch=%s commit=%s",
+            message.repository,
+            message.branch,
+            message.commit[:12],
+        )
     finally:
         if stash_created:
             restore_local_changes(target)
